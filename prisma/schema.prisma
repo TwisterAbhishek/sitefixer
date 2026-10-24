@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../app/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum OrganizationRole {
+  OWNER
+  ADMIN
+  MEMBER
+}
+
+enum WebsiteStatus {
+  ACTIVE
+  PAUSED
+  PENDING
+}
+
+enum MonitorType {
+  UPTIME
+  SSL
+  SEO
+  BROKEN_LINKS
+  PERFORMANCE
+}
+
+enum CheckStatus {
+  SUCCESS
+  FAILURE
+  ERROR
+}
+
+enum IssueSeverity {
+  CRITICAL
+  HIGH
+  MEDIUM
+  LOW
+  INFO
+}
+
+enum IssueStatus {
+  OPEN
+  ACKNOWLEDGED
+  RESOLVED
+  IGNORED
+}
+
+enum NotificationStatus {
+  PENDING
+  SENT
+  FAILED
+}
+
+enum SubscriptionStatus {
+  TRIALING
+  ACTIVE
+  PAST_DUE
+  CANCELED
+  INCOMPLETE
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts      Account[]
+  sessions      Session[]
+  memberships   OrganizationMember[]
+  issueEvents   IssueEvent[]
+  notifications Notification[]
+  reports       Report[]
+}
+
+model Organization {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  members       OrganizationMember[]
+  clients       Client[]
+  websites      Website[]
+  notifications Notification[]
+  subscriptions Subscription[]
+  usageRecords  UsageRecord[]
+  reports       Report[]
+}
+
+model OrganizationMember {
+  organizationId String
+  userId         String
+  role           OrganizationRole @default(MEMBER)
+  createdAt      DateTime         @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([organizationId, userId])
+  @@index([userId])
+}
+
+model Client {
+  id             String   @id @default(cuid())
+  organizationId String
+  name           String
+  email          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  websites     Website[]
+
+  @@index([organizationId])
+}
+
+model Website {
+  id             String        @id @default(cuid())
+  organizationId String
+  clientId       String?
+  name           String
+  url            String
+  status         WebsiteStatus @default(PENDING)
+  createdAt      DateTime      @default(now())
+  updatedAt      DateTime      @updatedAt
+
+  organization  Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  client        Client?        @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  monitors      Monitor[]
+  checkRuns     CheckRun[]
+  issues        Issue[]
+  notifications Notification[]
+  reports       Report[]
+
+  @@unique([organizationId, url])
+  @@index([organizationId, status])
+  @@index([clientId])
+}
+
+model Monitor {
+  id              String      @id @default(cuid())
+  websiteId       String
+  type            MonitorType
+  intervalMinutes Int         @default(15)
+  isEnabled       Boolean     @default(true)
+  nextRunAt       DateTime?
+  lastRunAt       DateTime?
+  createdAt       DateTime    @default(now())
+  updatedAt       DateTime    @updatedAt
+
+  website   Website    @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  checkRuns CheckRun[]
+
+  @@unique([websiteId, type])
+  @@index([isEnabled, nextRunAt])
+}
+
+model CheckRun {
+  id             String      @id @default(cuid())
+  websiteId      String
+  monitorId      String?
+  type           MonitorType
+  status         CheckStatus
+  httpStatus     Int?
+  responseTimeMs Int?
+  errorMessage   String?
+  details        Json?
+  startedAt      DateTime    @default(now())
+  completedAt    DateTime?
+
+  website Website  @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  monitor Monitor? @relation(fields: [monitorId], references: [id], onDelete: SetNull)
+  issues  Issue[]
+
+  @@index([websiteId, startedAt])
+  @@index([monitorId, startedAt])
+}
+
+model Issue {
+  id              String        @id @default(cuid())
+  websiteId       String
+  checkRunId      String?
+  fingerprint     String
+  type            String
+  severity        IssueSeverity @default(MEDIUM)
+  status          IssueStatus   @default(OPEN)
+  title           String
+  description     String?
+  affectedUrl     String?
+  firstDetectedAt DateTime      @default(now())
+  lastDetectedAt  DateTime      @default(now())
+  resolvedAt      DateTime?
+  createdAt       DateTime      @default(now())
+  updatedAt       DateTime      @updatedAt
+
+  website       Website        @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  checkRun      CheckRun?      @relation(fields: [checkRunId], references: [id], onDelete: SetNull)
+  events        IssueEvent[]
+  notifications Notification[]
+
+  @@unique([websiteId, fingerprint])
+  @@index([websiteId, status, severity])
+  @@index([lastDetectedAt])
+}
+
+model IssueEvent {
+  id        String   @id @default(cuid())
+  issueId   String
+  userId    String?
+  eventType String
+  message   String?
+  createdAt DateTime @default(now())
+
+  issue Issue @relation(fields: [issueId], references: [id], onDelete: Cascade)
+  user  User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([issueId, createdAt])
+}
+
+model Notification {
+  id             String             @id @default(cuid())
+  organizationId String
+  userId         String?
+  websiteId      String?
+  issueId        String?
+  channel        String             @default("EMAIL")
+  status         NotificationStatus @default(PENDING)
+  attempts       Int                @default(0)
+  lastError      String?
+  sentAt         DateTime?
+  createdAt      DateTime           @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  user         User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  website      Website?     @relation(fields: [websiteId], references: [id], onDelete: Cascade)
+  issue        Issue?       @relation(fields: [issueId], references: [id], onDelete: SetNull)
+
+  @@index([status, createdAt])
+  @@index([organizationId, createdAt])
+}
+
+model Plan {
+  id        String   @id @default(cuid())
+  name      String
+  slug      String   @unique
+  price     Int      @default(0)
+  currency  String   @default("INR")
+  limits    Json
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  subscriptions Subscription[]
+}
+
+model Subscription {
+  id                     String             @id @default(cuid())
+  organizationId         String
+  planId                 String
+  status                 SubscriptionStatus @default(TRIALING)
+  provider               String?
+  providerCustomerId     String?
+  providerSubscriptionId String?            @unique
+  currentPeriodStart     DateTime?
+  currentPeriodEnd       DateTime?
+  createdAt              DateTime           @default(now())
+  updatedAt              DateTime           @updatedAt
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  plan         Plan         @relation(fields: [planId], references: [id], onDelete: Restrict)
+
+  @@index([organizationId, status])
+}
+
+model UsageRecord {
+  id             String   @id @default(cuid())
+  organizationId String
+  type           String
+  quantity       Int      @default(1)
+  periodStart    DateTime
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@index([organizationId, type, periodStart])
+}
+
+model Report {
+  id             String    @id @default(cuid())
+  organizationId String
+  websiteId      String?
+  createdById    String?
+  type           String    @default("HEALTH_SUMMARY")
+  status         String    @default("PENDING")
+  storageKey     String?
+  createdAt      DateTime  @default(now())
+  completedAt    DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  website      Website?     @relation(fields: [websiteId], references: [id], onDelete: SetNull)
+  createdBy    User?        @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  @@index([organizationId, createdAt])
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+  @@index([userId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
